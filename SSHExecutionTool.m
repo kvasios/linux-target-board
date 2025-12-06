@@ -7,17 +7,20 @@ classdef SSHExecutionTool < target.ExecutionTool
     %   Required properties to be set before use:
     %     - SSHUser: SSH username on the target
     %     - SSHHost: IP address or hostname of the target
+    %     - SSHPort: SSH port (default: 22)
     %     - RemoteDir: Directory on target where executable is deployed
     %
     %   Example:
     %     tool = SSHExecutionTool();
     %     tool.SSHUser = 'franka';
     %     tool.SSHHost = '192.168.1.100';
+    %     tool.SSHPort = 2222;  % Optional, defaults to 22
     %     tool.RemoteDir = '/home/franka/simwork';
     
     properties (Access = public)
         SSHUser (1,1) string = "servobox-usr"
         SSHHost (1,1) string = "192.168.122.100"
+        SSHPort (1,1) double = 22
         RemoteDir (1,1) string = "/tmp/simwork"
         SSHOptions (1,1) string = "-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
     end
@@ -51,12 +54,13 @@ classdef SSHExecutionTool < target.ExecutionTool
             sshOpts = char(this.SSHOptions);
             sshUser = char(this.SSHUser);
             sshHost = char(this.SSHHost);
+            sshPort = this.SSHPort;
             remoteDir = char(this.RemoteDir);
             remoteLibDir = [remoteDir, '/lib'];
             
             % 1) Setup remote directories
-            mkdirCmd = sprintf('ssh %s %s@%s ''mkdir -p %s %s''', ...
-                sshOpts, sshUser, sshHost, remoteDir, remoteLibDir);
+            mkdirCmd = sprintf('ssh -p %d %s %s@%s ''mkdir -p %s %s''', ...
+                sshPort, sshOpts, sshUser, sshHost, remoteDir, remoteLibDir);
             
             fprintf('SSHExecutionTool: Creating remote directories on %s...\n', sshHost);
             [status, result] = system(mkdirCmd);
@@ -68,8 +72,8 @@ classdef SSHExecutionTool < target.ExecutionTool
             
             % 2) Copy executable
             fprintf('SSHExecutionTool: Deploying %s to %s@%s:%s...\n', fullExeName, sshUser, sshHost, remoteDir);
-            scpExeCmd = sprintf('scp %s "%s" %s@%s:%s/', ...
-                sshOpts, char(appPath), sshUser, sshHost, remoteDir);
+            scpExeCmd = sprintf('scp -P %d %s "%s" %s@%s:%s/', ...
+                sshPort, sshOpts, char(appPath), sshUser, sshHost, remoteDir);
             [status, result] = system(scpExeCmd);
             if status ~= 0
                 fprintf('SSHExecutionTool: Failed to copy application to target.\n%s\n', result);
@@ -86,8 +90,8 @@ classdef SSHExecutionTool < target.ExecutionTool
                     fprintf('SSHExecutionTool: Syncing libraries from %s...\n', localLibDir);
                     
                     % Copy all .so files to remote lib directory
-                    scpLibCmd = sprintf('scp %s -r "%s"/*.so* %s@%s:%s/', ...
-                        sshOpts, localLibDir, sshUser, sshHost, remoteLibDir);
+                    scpLibCmd = sprintf('scp -P %d %s -r "%s"/*.so* %s@%s:%s/', ...
+                        sshPort, sshOpts, localLibDir, sshUser, sshHost, remoteLibDir);
                     
                     [status, result] = system(scpLibCmd);
                     if status ~= 0
@@ -101,8 +105,8 @@ classdef SSHExecutionTool < target.ExecutionTool
             end
             
             % 4) Set permissions
-            chmodCmd = sprintf('ssh %s %s@%s ''chmod +x %s/%s''', ...
-                sshOpts, sshUser, sshHost, remoteDir, fullExeName);
+            chmodCmd = sprintf('ssh -p %d %s %s@%s ''chmod +x %s/%s''', ...
+                sshPort, sshOpts, sshUser, sshHost, remoteDir, fullExeName);
             [status, result] = system(chmodCmd);
             if status ~= 0
                 fprintf('SSHExecutionTool: Failed to set executable permissions.\n%s\n', result);
@@ -119,15 +123,15 @@ classdef SSHExecutionTool < target.ExecutionTool
             pidFile = sprintf('%s/app.pid', remoteDir);
             
             % Clean up old PID file
-            rmCmd = sprintf('ssh %s %s@%s ''rm -f %s''', ...
-                sshOpts, sshUser, sshHost, pidFile);
+            rmCmd = sprintf('ssh -p %d %s %s@%s ''rm -f %s''', ...
+                sshPort, sshOpts, sshUser, sshHost, pidFile);
             system(rmCmd);
             
             % Run command: Background the process and write PID to file. 
             % ssh -f puts ssh into the background after authentication.
             % We use simple single quotes to protect variables from local shell expansion.
-            runCmd = sprintf('ssh -f %s %s@%s ''cd %s && export LD_LIBRARY_PATH=./lib:$LD_LIBRARY_PATH && nohup ./%s > /dev/null 2>&1 < /dev/null & echo $! > %s''', ...
-                sshOpts, sshUser, sshHost, remoteDir, fullExeName, pidFile);
+            runCmd = sprintf('ssh -f -p %d %s %s@%s ''cd %s && export LD_LIBRARY_PATH=./lib:$LD_LIBRARY_PATH && nohup ./%s > /dev/null 2>&1 < /dev/null & echo $! > %s''', ...
+                sshPort, sshOpts, sshUser, sshHost, remoteDir, fullExeName, pidFile);
             
             [status, result] = system(runCmd);
             
@@ -141,8 +145,8 @@ classdef SSHExecutionTool < target.ExecutionTool
             % Give a small delay to ensure file is written (usually instant)
             pause(0.5);
             
-            readPidCmd = sprintf('ssh %s %s@%s ''cat %s''', ...
-                sshOpts, sshUser, sshHost, pidFile);
+            readPidCmd = sprintf('ssh -p %d %s %s@%s ''cat %s''', ...
+                sshPort, sshOpts, sshUser, sshHost, pidFile);
             [status, result] = system(readPidCmd);
             
             result = strtrim(result);
@@ -174,8 +178,8 @@ classdef SSHExecutionTool < target.ExecutionTool
             fullExeName = char(strcat(exeName, exeExt));
             
             % Force kill potentially multiple instances
-            pkillCmd = sprintf('ssh %s %s@%s "pkill -9 -f ''%s'' 2>/dev/null || true"', ...
-                this.SSHOptions, this.SSHUser, this.SSHHost, fullExeName);
+            pkillCmd = sprintf('ssh -p %d %s %s@%s "pkill -9 -f ''%s'' 2>/dev/null || true"', ...
+                this.SSHPort, this.SSHOptions, this.SSHUser, this.SSHHost, fullExeName);
             [status, ~] = system(pkillCmd);
             
             this.RemotePID = -1;
@@ -216,12 +220,12 @@ classdef SSHExecutionTool < target.ExecutionTool
             % Check if process is running
             if this.RemotePID > 0
                 % Check by PID
-                checkCmd = sprintf('ssh %s %s@%s "kill -0 %d 2>/dev/null && echo running || echo stopped"', ...
-                    this.SSHOptions, this.SSHUser, this.SSHHost, this.RemotePID);
+                checkCmd = sprintf('ssh -p %d %s %s@%s "kill -0 %d 2>/dev/null && echo running || echo stopped"', ...
+                    this.SSHPort, this.SSHOptions, this.SSHUser, this.SSHHost, this.RemotePID);
             else
                 % Check by name
-                checkCmd = sprintf('ssh %s %s@%s "pgrep -f ''%s'' >/dev/null && echo running || echo stopped"', ...
-                    this.SSHOptions, this.SSHUser, this.SSHHost, fullExeName);
+                checkCmd = sprintf('ssh -p %d %s %s@%s "pgrep -f ''%s'' >/dev/null && echo running || echo stopped"', ...
+                    this.SSHPort, this.SSHOptions, this.SSHUser, this.SSHHost, fullExeName);
             end
             
             [exitCode, result] = system(checkCmd);
